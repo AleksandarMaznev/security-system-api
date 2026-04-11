@@ -4,7 +4,7 @@ const { requireAdmin } = require('./_auth');
 module.exports = async (req, res) => {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  const user = requireAdmin(req, res);
+  const user = await requireAdmin(req, res);
   if (!user) return;
 
   const { device_id, limit = 100, offset = 0 } = req.query;
@@ -12,7 +12,7 @@ module.exports = async (req, res) => {
   let query = supabase
     .from('access_logs')
     .select('*')
-    .order('created_at', { ascending: false })
+    .order('timestamp', { ascending: false })
     .range(Number(offset), Number(offset) + Number(limit) - 1);
 
   if (device_id) query = query.eq('device_id', device_id);
