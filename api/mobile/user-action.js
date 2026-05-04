@@ -39,9 +39,11 @@ module.exports = async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
-  const { id, action } = req.body;
+  const { id: rawId, action } = req.body;
+  const id = parseInt(rawId, 10);
 
-  if (!id) return res.status(400).json({ error: 'id is required' });
+  if (!rawId) return res.status(400).json({ error: 'id is required' });
+  if (isNaN(id)) return res.status(400).json({ error: 'id must be a valid integer' });
   if (!VALID_ACTIONS.includes(action)) {
     return res.status(400).json({ error: `action must be one of: ${VALID_ACTIONS.join(', ')}` });
   }
@@ -54,25 +56,23 @@ module.exports = async (req, res) => {
     .eq('active', true);
 
   if (fpError) return res.status(500).json({ error: fpError.message });
-  if (!fingerprints || fingerprints.length === 0) {
-    return res.status(404).json({ error: 'No active fingerprints found for this user' });
-  }
 
   if (action === 'promote' || action === 'demote') {
     const newRole = action === 'promote' ? 'admin' : 'standard';
     const command = action === 'promote' ? 'promote_to_admin' : 'demote_to_user';
 
-    const { error: userError } = await supabase
+    const { data: updatedUsers, error: userError } = await supabase
       .from('users')
       .update({ role: newRole })
-      .eq('id', id);
+      .eq('id', id)
+      .select('id');
 
     if (userError) return res.status(500).json({ error: userError.message });
+    if (!updatedUsers || updatedUsers.length === 0) return res.status(404).json({ error: 'User not found' });
 
     let generatedCredentials = null;
 
     if (action === 'promote') {
-      // Fetch user's name to build username
       const { data: userData, error: userFetchError } = await supabase
         .from('users')
         .select('name')
@@ -102,6 +102,15 @@ module.exports = async (req, res) => {
       if (credError) return res.status(500).json({ error: credError.message });
     }
 
+    if (!fingerprints || fingerprints.length === 0) {
+      return res.status(200).json({
+        success: true,
+        devices_notified: 0,
+        warning: 'Role updated but user had no active fingerprints — no device commands were queued.',
+        ...(generatedCredentials && { credentials: generatedCredentials }),
+      });
+    }
+
     const commands = fingerprints.map(fp => ({
       device_id: fp.device_id,
       command,
@@ -119,20 +128,30 @@ module.exports = async (req, res) => {
     });
 
   } else if (action === 'delete') {
+    const { data: updatedUsers, error: userError } = await supabase
+      .from('users')
+      .update({ active: false })
+      .eq('id', id)
+      .select('id');
+
+    if (userError) return res.status(500).json({ error: userError.message });
+    if (!updatedUsers || updatedUsers.length === 0) return res.status(404).json({ error: 'User not found' });
+
+    if (!fingerprints || fingerprints.length === 0) {
+      return res.status(200).json({
+        success: true,
+        devices_notified: 0,
+        warning: 'User deactivated but had no active fingerprints — no device commands were queued.',
+      });
+    }
+
     const { error: fpUpdateError } = await supabase
       .from('user_fingerprints')
-      .update({ active: false, fingerprint_id: null })
+      .update({ active: false })
       .eq('user_id', id)
       .eq('active', true);
 
     if (fpUpdateError) return res.status(500).json({ error: fpUpdateError.message });
-
-    const { error: userError } = await supabase
-      .from('users')
-      .update({ active: false })
-      .eq('id', id);
-
-    if (userError) return res.status(500).json({ error: userError.message });
 
     const commands = fingerprints.map(fp => ({
       device_id: fp.device_id,
