@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 const supabase = require('../_supabase');
 const { requireAdmin } = require('./_auth');
 
-const VALID_ACTIONS = ['promote', 'demote', 'delete'];
+const VALID_ACTIONS = ['promote', 'demote', 'delete', 'update'];
 
 // Alphanumeric only, no ambiguous chars (0/O, 1/I/l)
 const PASSWORD_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789abcdefghjkmnpqrstuvwxyz';
@@ -46,6 +46,29 @@ module.exports = async (req, res) => {
   if (isNaN(id)) return res.status(400).json({ error: 'id must be a valid integer' });
   if (!VALID_ACTIONS.includes(action)) {
     return res.status(400).json({ error: `action must be one of: ${VALID_ACTIONS.join(', ')}` });
+  }
+
+  // 'update' is a plain rename — it doesn't touch role, doesn't notify any
+  // device, and doesn't need the fingerprint lookup below at all. Handled
+  // and returned here so it skips that unrelated work entirely, rather
+  // than being squeezed into the promote/demote/delete branches below.
+  if (action === 'update') {
+    const { name } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'name is required for the update action' });
+    }
+
+    const { data: updatedUsers, error: userError } = await supabase
+      .from('users')
+      .update({ name: name.trim() })
+      .eq('id', id)
+      .select('id');
+
+    if (userError) return res.status(500).json({ error: userError.message });
+    if (!updatedUsers || updatedUsers.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    return res.status(200).json({ success: true });
   }
 
   // Get all devices this user has active fingerprints on
