@@ -1,4 +1,5 @@
 const supabase = require('./_supabase');
+const { sendPushToAdmins } = require('./_push');
 
 // POST /api/log
 //
@@ -56,7 +57,21 @@ module.exports = async (req, res) => {
       .from('devices')
       .upsert({ device_id, last_seen: new Date().toISOString(), status: 'online' }, { onConflict: 'device_id' });
 
-    const accepted = (confirmed ?? []).map((r) => r.idempotency_key);
+    // One consolidated push for the whole batch, not one per failed
+    // entry — a device catching up after hours offline could otherwise
+    // fire dozens of near-simultaneous notifications for one real event.
+    const acceptedKeys = new Set((confirmed ?? []).map((r) => r.idempotency_key));
+    const failCount = rows.filter(
+      (r) => r.result === 'fail' && acceptedKeys.has(r.idempotency_key)
+    ).length;
+    if (failCount > 0) {
+      await sendPushToAdmins(
+        failCount === 1 ? 'Failed Access Attempt' : `${failCount} Failed Access Attempts`,
+        `Device ${device_id}`
+      );
+    }
+
+    const accepted = Array.from(acceptedKeys);
     return res.status(200).json({ success: true, accepted });
   }
 
@@ -76,6 +91,10 @@ module.exports = async (req, res) => {
     .update({ last_seen: new Date().toISOString() })
     .eq('device_id', device_id);
   if (deviceError) return res.status(500).json({ error: deviceError.message });
+
+  if (result === 'fail') {
+    await sendPushToAdmins('Failed Access Attempt', `Device ${device_id} — fingerprint ${fingerprint_id}`);
+  }
 
   return res.status(200).json({ success: true });
 };

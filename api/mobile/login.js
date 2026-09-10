@@ -3,12 +3,12 @@ const jwt = require('jsonwebtoken');
 const supabase = require('../_supabase');
 
 const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_EXPIRES_IN = '8h';
+const JWT_EXPIRES_IN = '48h';
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { username, password } = req.body;
+  const { username, password, push_token } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
 
   const { data, error } = await supabase
@@ -23,6 +23,10 @@ module.exports = async (req, res) => {
 
   const valid = await bcrypt.compare(password, data.password_hash);
   if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+
+  if (push_token) {
+    await supabase.from('admin_credentials').update({ push_token }).eq('id', data.id);
+  }
 
   const token = jwt.sign(
     { credential_id: data.id, user_id: data.user_id, name: data.users.name },
