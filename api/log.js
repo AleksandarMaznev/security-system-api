@@ -22,14 +22,14 @@ module.exports = async (req, res) => {
     const rows = [];
     for (const entry of logs) {
       const { fingerprint_id, result, role_at_time, idempotency_key, event_time } = entry || {};
-      if (!fingerprint_id || !result || !idempotency_key) {
+      if (!result || !idempotency_key) {
         return res.status(400).json({
           error: 'each log entry requires fingerprint_id, result, and idempotency_key',
         });
       }
       rows.push({
         device_id,
-        fingerprint_id,
+        fingerprint_id: fingerprint_id || null,
         result,
         role_at_time: role_at_time || null,
         idempotency_key,
@@ -77,13 +77,13 @@ module.exports = async (req, res) => {
 
   // --- Original single-event shape, unchanged ---
   const { fingerprint_id, device_id, result, role_at_time } = body;
-  if (!fingerprint_id || !device_id || !result) {
+  if (!device_id || !result) {
     return res.status(400).json({ error: 'fingerprint_id, device_id and result are required' });
   }
 
   const { error: logError } = await supabase
     .from('access_logs')
-    .insert([{ fingerprint_id, device_id, result, role_at_time }]);
+    .insert([{ fingerprint_id: fingerprint_id || null, device_id, result, role_at_time }]);
   if (logError) return res.status(500).json({ error: logError.message });
 
   const { error: deviceError } = await supabase
